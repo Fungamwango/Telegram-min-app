@@ -1,1 +1,211 @@
-testing telegram min app
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Tap Empire — Telegram Mini App</title>
+
+    <!-- Telegram Mini App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- ============ LOADING SCREEN ============ -->
+    <div id="splash" class="splash">
+        <div class="splash-coin">🪙</div>
+        <h1>Tap Empire</h1>
+        <div class="splash-spinner"></div>
+    </div>
+
+    <!-- ============ APP ============ -->
+    <div id="app" class="app hidden">
+
+        <!-- Header -->
+        <header class="header">
+            <div class="user-info">
+                <div class="avatar" id="userAvatar">?</div>
+                <div class="user-meta">
+                    <span class="user-name" id="userName">Guest</span>
+                    <span class="user-rank" id="userRank">🥉 Bronze</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="icon-btn" id="btnTheme" title="Theme info">🎨</button>
+            </div>
+        </header>
+
+        <!-- ============ HOME TAB (tap game) ============ -->
+        <main class="tab active" id="tab-home">
+            <div class="balance-box">
+                <span class="balance-label">Your Balance</span>
+                <div class="balance-value">
+                    <span class="coin-icon">🪙</span>
+                    <span id="balance">0</span>
+                </div>
+                <span class="per-tap" id="perTapLabel">+1 per tap</span>
+            </div>
+
+            <div class="tap-area">
+                <button class="tap-coin" id="tapCoin" aria-label="Tap to earn">
+                    <span class="tap-coin-inner">🪙</span>
+                </button>
+                <div id="floaters"></div>
+            </div>
+
+            <div class="energy-box">
+                <div class="energy-label">
+                    <span>⚡ Energy</span>
+                    <span id="energyText">100 / 100</span>
+                </div>
+                <div class="energy-bar">
+                    <div class="energy-fill" id="energyFill"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ============ EARN TAB (ads & boosts) ============ -->
+        <main class="tab" id="tab-earn">
+            <h2 class="tab-title">💰 Earn More</h2>
+
+            <div class="card earn-card" id="cardRewardedInterstitial">
+                <div class="card-icon">🎬</div>
+                <div class="card-body">
+                    <div class="card-title">Watch a Video Ad</div>
+                    <div class="card-sub">Rewarded Interstitial · +500 🪙</div>
+                </div>
+                <button class="card-btn" data-ad="interstitial">Watch</button>
+            </div>
+
+            <div class="card earn-card" id="cardRewardedPopup">
+                <div class="card-icon">🚀</div>
+                <div class="card-body">
+                    <div class="card-title">Quick Ad Boost</div>
+                    <div class="card-sub">Rewarded Popup · +250 🪙</div>
+                </div>
+                <button class="card-btn" data-ad="popup">Open</button>
+            </div>
+
+            <div class="card earn-card">
+                <div class="card-icon">⚡</div>
+                <div class="card-body">
+                    <div class="card-title">Refill Energy</div>
+                    <div class="card-sub">Watch an ad to refill instantly</div>
+                </div>
+                <button class="card-btn" data-ad="energy">Refill</button>
+            </div>
+
+            <div class="card earn-card">
+                <div class="card-icon">👥</div>
+                <div class="card-body">
+                    <div class="card-title">Invite Friends</div>
+                    <div class="card-sub">+1,000 🪙 per friend</div>
+                </div>
+                <button class="card-btn" id="btnInvite">Share</button>
+            </div>
+
+            <div class="card earn-card">
+                <div class="card-icon">📅</div>
+                <div class="card-body">
+                    <div class="card-title">Daily Reward</div>
+                    <div class="card-sub" id="dailySub">Claim +200 🪙 every day</div>
+                </div>
+                <button class="card-btn" id="btnDaily">Claim</button>
+            </div>
+
+            <p class="ads-note" id="adsNote"></p>
+        </main>
+
+        <!-- ============ SHOP TAB (upgrades) ============ -->
+        <main class="tab" id="tab-shop">
+            <h2 class="tab-title">🛒 Upgrades</h2>
+
+            <div class="card shop-card">
+                <div class="card-icon">👆</div>
+                <div class="card-body">
+                    <div class="card-title">Multitap</div>
+                    <div class="card-sub">Level <span id="lvlMultitap">1</span> · +1 coin per tap</div>
+                </div>
+                <button class="card-btn buy-btn" data-upgrade="multitap">
+                    <span id="costMultitap">500</span> 🪙
+                </button>
+            </div>
+
+            <div class="card shop-card">
+                <div class="card-icon">🔋</div>
+                <div class="card-body">
+                    <div class="card-title">Energy Limit</div>
+                    <div class="card-sub">Level <span id="lvlEnergy">1</span> · +50 max energy</div>
+                </div>
+                <button class="card-btn buy-btn" data-upgrade="energy">
+                    <span id="costEnergy">750</span> 🪙
+                </button>
+            </div>
+
+            <div class="card shop-card">
+                <div class="card-icon">♻️</div>
+                <div class="card-body">
+                    <div class="card-title">Regen Speed</div>
+                    <div class="card-sub">Level <span id="lvlRegen">1</span> · faster energy regen</div>
+                </div>
+                <button class="card-btn buy-btn" data-upgrade="regen">
+                    <span id="costRegen">1000</span> 🪙
+                </button>
+            </div>
+        </main>
+
+        <!-- ============ PROFILE TAB (SDK playground) ============ -->
+        <main class="tab" id="tab-profile">
+            <h2 class="tab-title">👤 Profile</h2>
+
+            <div class="card profile-card">
+                <div class="avatar avatar-lg" id="profileAvatar">?</div>
+                <div class="card-body">
+                    <div class="card-title" id="profileName">Guest</div>
+                    <div class="card-sub" id="profileId">id: —</div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat"><span class="stat-val" id="statTaps">0</span><span class="stat-key">Total Taps</span></div>
+                <div class="stat"><span class="stat-val" id="statEarned">0</span><span class="stat-key">Total Earned</span></div>
+                <div class="stat"><span class="stat-val" id="statAds">0</span><span class="stat-key">Ads Watched</span></div>
+                <div class="stat"><span class="stat-val" id="statPlatform">—</span><span class="stat-key">Platform</span></div>
+            </div>
+
+            <h3 class="section-title">🧪 Telegram SDK Tools</h3>
+            <div class="sdk-grid">
+                <button class="sdk-btn" id="sdkPopup">💬 Popup</button>
+                <button class="sdk-btn" id="sdkConfirm">❓ Confirm</button>
+                <button class="sdk-btn" id="sdkHaptics">📳 Haptics</button>
+                <button class="sdk-btn" id="sdkQr">📷 Scan QR</button>
+                <button class="sdk-btn" id="sdkLink">🌐 Open Link</button>
+                <button class="sdk-btn" id="sdkExpand">↕️ Expand</button>
+                <button class="sdk-btn" id="sdkContact">📱 Contact</button>
+                <button class="sdk-btn" id="sdkHome">➕ Home Screen</button>
+            </div>
+
+            <h3 class="section-title">☁️ Cloud Storage</h3>
+            <div class="cloud-row">
+                <button class="sdk-btn" id="sdkSave">💾 Save Progress</button>
+                <button class="sdk-btn danger" id="sdkReset">🗑️ Reset All</button>
+            </div>
+            <p class="cloud-status" id="cloudStatus">Progress auto-saves to Telegram Cloud.</p>
+        </main>
+
+        <!-- ============ BOTTOM NAV ============ -->
+        <nav class="nav">
+            <button class="nav-btn active" data-tab="home"><span>🏠</span>Home</button>
+            <button class="nav-btn" data-tab="earn"><span>💰</span>Earn</button>
+            <button class="nav-btn" data-tab="shop"><span>🛒</span>Shop</button>
+            <button class="nav-btn" data-tab="profile"><span>👤</span>Profile</button>
+        </nav>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
