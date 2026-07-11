@@ -45,13 +45,18 @@
                     <span class="coin-icon">🪙</span>
                     <span id="balance">0</span>
                 </div>
-                <span class="per-tap" id="perTapLabel">+1 per tap</span>
+                <div class="chip-row">
+                    <span class="chip" id="perTapLabel">👆 +1 per tap</span>
+                    <span class="chip" id="profitChip">⚙️ +0/hr</span>
+                </div>
             </div>
 
             <div class="tap-area">
                 <button class="tap-coin" id="tapCoin" aria-label="Tap to earn">
                     <span class="tap-coin-inner">🪙</span>
                 </button>
+                <button class="golden-coin hidden" id="goldenCoin" aria-label="Golden coin">🌟</button>
+                <div class="frenzy-banner hidden" id="frenzyBanner">🔥 FRENZY ×5 <span id="frenzyTimer">15</span>s</div>
                 <div id="floaters"></div>
             </div>
 
@@ -66,7 +71,35 @@
             </div>
         </main>
 
-        <!-- ============ EARN TAB (ads & boosts) ============ -->
+        <!-- ============ DAILY TAB (streak, quests, wheel) ============ -->
+        <main class="tab" id="tab-daily">
+            <h2 class="tab-title">🎯 Daily</h2>
+
+            <div class="card streak-card">
+                <div class="streak-head">
+                    <div>
+                        <div class="card-title">🔥 Daily Streak</div>
+                        <div class="card-sub" id="streakSub">Claim every day — miss a day and it resets!</div>
+                    </div>
+                    <button class="card-btn" id="btnStreak">Claim</button>
+                </div>
+                <div class="streak-cal" id="streakCal"></div>
+            </div>
+
+            <div class="card wheel-card">
+                <div class="card-icon">🎡</div>
+                <div class="card-body">
+                    <div class="card-title">Lucky Wheel</div>
+                    <div class="card-sub" id="wheelSub">1 free spin per day</div>
+                </div>
+                <button class="card-btn" id="btnWheel">Spin</button>
+            </div>
+
+            <h3 class="section-title">📋 Today's Quests</h3>
+            <div id="questList"></div>
+        </main>
+
+        <!-- ============ EARN TAB (ads & friends) ============ -->
         <main class="tab" id="tab-earn">
             <h2 class="tab-title">💰 Earn More</h2>
 
@@ -101,18 +134,9 @@
                 <div class="card-icon">👥</div>
                 <div class="card-body">
                     <div class="card-title">Invite Friends</div>
-                    <div class="card-sub">+1,000 🪙 per friend</div>
+                    <div class="card-sub" id="inviteSub">New friends get +500 🪙 to start</div>
                 </div>
                 <button class="card-btn" id="btnInvite">Share</button>
-            </div>
-
-            <div class="card earn-card">
-                <div class="card-icon">📅</div>
-                <div class="card-body">
-                    <div class="card-title">Daily Reward</div>
-                    <div class="card-sub" id="dailySub">Claim +200 🪙 every day</div>
-                </div>
-                <button class="card-btn" id="btnDaily">Claim</button>
             </div>
 
             <p class="ads-note" id="adsNote"></p>
@@ -154,6 +178,17 @@
                     <span id="costRegen">1000</span> 🪙
                 </button>
             </div>
+
+            <div class="card shop-card">
+                <div class="card-icon">🤖</div>
+                <div class="card-body">
+                    <div class="card-title">Auto Bot</div>
+                    <div class="card-sub">Level <span id="lvlAuto">0</span> · +250 🪙/hr each, earns while you're away</div>
+                </div>
+                <button class="card-btn buy-btn" data-upgrade="auto">
+                    <span id="costAuto">2000</span> 🪙
+                </button>
+            </div>
         </main>
 
         <!-- ============ PROFILE TAB (SDK playground) ============ -->
@@ -172,7 +207,7 @@
                 <div class="stat"><span class="stat-val" id="statTaps">0</span><span class="stat-key">Total Taps</span></div>
                 <div class="stat"><span class="stat-val" id="statEarned">0</span><span class="stat-key">Total Earned</span></div>
                 <div class="stat"><span class="stat-val" id="statAds">0</span><span class="stat-key">Ads Watched</span></div>
-                <div class="stat"><span class="stat-val" id="statPlatform">—</span><span class="stat-key">Platform</span></div>
+                <div class="stat"><span class="stat-val" id="statStreak">0</span><span class="stat-key">Best Streak</span></div>
             </div>
 
             <h3 class="section-title">🧪 Telegram SDK Tools</h3>
@@ -198,10 +233,36 @@
         <!-- ============ BOTTOM NAV ============ -->
         <nav class="nav">
             <button class="nav-btn active" data-tab="home"><span>🏠</span>Home</button>
+            <button class="nav-btn" data-tab="daily"><span>🎯</span>Daily</button>
             <button class="nav-btn" data-tab="earn"><span>💰</span>Earn</button>
             <button class="nav-btn" data-tab="shop"><span>🛒</span>Shop</button>
             <button class="nav-btn" data-tab="profile"><span>👤</span>Profile</button>
         </nav>
+    </div>
+
+    <!-- ============ LUCKY WHEEL MODAL ============ -->
+    <div id="wheelModal" class="modal hidden">
+        <div class="modal-box">
+            <h3 class="modal-title">🎡 Lucky Wheel</h3>
+            <div class="wheel-wrap">
+                <div class="wheel-pointer">▼</div>
+                <div class="wheel" id="wheel"></div>
+            </div>
+            <button class="card-btn wheel-spin-btn" id="btnSpinNow">SPIN</button>
+            <button class="modal-close" id="btnWheelClose">Close</button>
+        </div>
+    </div>
+
+    <!-- ============ RANK-UP OVERLAY ============ -->
+    <div id="rankOverlay" class="rank-overlay hidden">
+        <div id="confetti"></div>
+        <div class="rank-content">
+            <div class="rank-big" id="rankBigIcon">🥈</div>
+            <h2>RANK UP!</h2>
+            <p id="rankNewName">Silver</p>
+            <button class="card-btn" id="btnRankShare">📣 Share</button>
+            <button class="modal-close" id="btnRankClose">Continue</button>
+        </div>
     </div>
 
     <!-- Toast notifications -->

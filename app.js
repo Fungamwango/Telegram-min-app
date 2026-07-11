@@ -1,24 +1,58 @@
 /* ============================================================
    Tap Empire — Telegram Mini App
    Vanilla JS. Telegram WebApp SDK + Monetag rewarded ads.
+   Features: tap game, energy, upgrades, auto bot (passive +
+   offline earnings), daily streak, quests, lucky wheel,
+   golden-coin frenzy, rank-up celebrations, referrals.
    ============================================================ */
 
 'use strict';
 
 /* ------------------------------------------------------------
-   CONFIG — set your Monetag zone before deploying.
-   Get a zone id at https://monetag.com (add your bot/mini app
-   as a "Telegram Mini App" ad unit, copy the zone number).
+   CONFIG
    ------------------------------------------------------------ */
 const CONFIG = {
     MONETAG_ZONE_ID: '11272175', // Monetag rewarded interstitial zone
-    MONETAG_ENABLE_INAPP: true, // automatic in-app interstitials
+    MONETAG_ENABLE_INAPP: true,  // automatic in-app interstitials
     BOT_USERNAME: 'SageGames_bot', // used to build the invite link
     APP_SHORT_NAME: 'app',         // t.me/<bot>/<short_name> from BotFather
     REWARD_INTERSTITIAL: 500,
     REWARD_POPUP: 250,
-    REWARD_DAILY: 200,
+    REWARD_REFERRAL_WELCOME: 500,  // bonus for joining via a friend's link
+    AUTO_RATE_PER_LEVEL: 250,      // coins per hour per Auto Bot level
+    OFFLINE_CAP_HOURS: 3,          // max hours of offline earnings
+    FRENZY_SECONDS: 15,
+    FRENZY_MULTIPLIER: 5,
 };
+
+/* Escalating rewards for consecutive days (cycles after day 7) */
+const STREAK_REWARDS = [200, 400, 800, 1500, 2500, 3500, 5000];
+
+/* Daily quest pool — 3 are picked per day, rotating deterministically */
+const QUEST_POOL = [
+    { id: 'ads3',    icon: '🎬', label: 'Watch 3 ads',           key: 'ads',      target: 3,   reward: 600 },
+    { id: 'taps500', icon: '👆', label: 'Tap 500 times',         key: 'taps',     target: 500, reward: 500 },
+    { id: 'share1',  icon: '👥', label: 'Share with a friend',   key: 'shares',   target: 1,   reward: 800 },
+    { id: 'upg1',    icon: '🛒', label: 'Buy an upgrade',        key: 'upgrades', target: 1,   reward: 700 },
+    { id: 'spin1',   icon: '🎡', label: 'Spin the lucky wheel',  key: 'spins',    target: 1,   reward: 300 },
+];
+
+/* Lucky wheel: 8 segments, weighted odds */
+const WHEEL_SEGMENTS = [
+    { label: '100',  coins: 100,  weight: 20, color: '#f5b93c' },
+    { label: '250',  coins: 250,  weight: 16, color: '#e67e22' },
+    { label: '⚡',    energy: true, weight: 14, color: '#35c46f' },
+    { label: '500',  coins: 500,  weight: 12, color: '#f5b93c' },
+    { label: '150',  coins: 150,  weight: 16, color: '#e67e22' },
+    { label: '1000', coins: 1000, weight: 8,  color: '#9b59b6' },
+    { label: '300',  coins: 300,  weight: 12, color: '#f5b93c' },
+    { label: '2500', coins: 2500, weight: 2,  color: '#e74c3c' },
+];
+
+const RANKS = [
+    [0, '🥉', 'Bronze'], [5000, '🥈', 'Silver'], [25000, '🥇', 'Gold'],
+    [100000, '💎', 'Diamond'], [500000, '👑', 'Legend'],
+];
 
 /* ============================================================
    Telegram SDK bootstrap
@@ -35,20 +69,68 @@ const state = {
     totalEarned: 0,
     adsWatched: 0,
     energy: 100,
-    lastDaily: 0,          // timestamp of last daily claim
-    upgrades: { multitap: 1, energy: 1, regen: 1 },
+    upgrades: { multitap: 1, energy: 1, regen: 1, auto: 0 },
+    // streak
+    streak: 0,
+    bestStreak: 0,
+    streakLastClaim: '',   // 'YYYY-MM-DD' of last claim
+    // daily counters (reset each day)
+    daily: null,           // { date, taps, ads, shares, upgrades, spins, freeSpinUsed, claimed: {} }
+    // misc
+    lastRankIdx: 0,
+    refBonusGiven: false,
+    friendsShared: 0,
 };
 
-const perTap = () => state.upgrades.multitap;
+/* Frenzy (not persisted) */
+let frenzyUntil = 0;
+const frenzyActive = () => Date.now() < frenzyUntil;
+
+const perTap = () => state.upgrades.multitap * (frenzyActive() ? CONFIG.FRENZY_MULTIPLIER : 1);
+const tapCost = () => state.upgrades.multitap; // energy cost is never multiplied by frenzy
 const maxEnergy = () => 100 + (state.upgrades.energy - 1) * 50;
 const regenPerSec = () => state.upgrades.regen;
-const upgradeCost = (key) => ({ multitap: 500, energy: 750, regen: 1000 }[key]) *
-    Math.pow(2, state.upgrades[key] - 1);
+const autoPerHour = () => state.upgrades.auto * CONFIG.AUTO_RATE_PER_LEVEL;
 
-const RANKS = [
-    [0, '🥉 Bronze'], [5000, '🥈 Silver'], [25000, '🥇 Gold'],
-    [100000, '💎 Diamond'], [500000, '👑 Legend'],
-];
+const UPGRADE_BASE = { multitap: 500, energy: 750, regen: 1000, auto: 2000 };
+function upgradeCost(key) {
+    // auto starts at level 0, the others at level 1
+    const lvl = key === 'auto' ? state.upgrades.auto : state.upgrades[key] - 1;
+    return UPGRADE_BASE[key] * Math.pow(2, lvl);
+}
+
+/* ============================================================
+   Date helpers (UTC days so timezone changes can't double-claim)
+   ============================================================ */
+const dayStr = (d) => d.toISOString().slice(0, 10);
+const todayStr = () => dayStr(new Date());
+const yesterdayStr = () => dayStr(new Date(Date.now() - 86400000));
+
+function freshDaily() {
+    return { date: todayStr(), taps: 0, ads: 0, shares: 0, upgrades: 0, spins: 0,
+             freeSpinUsed: false, claimed: {} };
+}
+
+/* Reset daily counters when the date rolls over */
+function ensureDaily() {
+    if (!state.daily || state.daily.date !== todayStr()) {
+        state.daily = freshDaily();
+    }
+    return state.daily;
+}
+
+/* Deterministic 3-quest selection for today (simple seeded shuffle) */
+function todaysQuests() {
+    let seed = 0;
+    for (const c of todayStr()) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+    const idx = QUEST_POOL.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+        seed = (seed * 1103515245 + 12345) >>> 0;
+        const j = seed % (i + 1);
+        [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    return idx.slice(0, 3).map((i) => QUEST_POOL[i]);
+}
 
 /* ============================================================
    DOM helpers
@@ -71,6 +153,7 @@ function toast(msg) {
 const haptic = {
     tap: () => tg?.HapticFeedback?.impactOccurred('light'),
     medium: () => tg?.HapticFeedback?.impactOccurred('medium'),
+    heavy: () => tg?.HapticFeedback?.impactOccurred('heavy'),
     success: () => tg?.HapticFeedback?.notificationOccurred('success'),
     error: () => tg?.HapticFeedback?.notificationOccurred('error'),
     warning: () => tg?.HapticFeedback?.notificationOccurred('warning'),
@@ -96,7 +179,7 @@ function showConfirm(message, cb) {
 /* ============================================================
    Persistence — Telegram CloudStorage with localStorage fallback
    ============================================================ */
-const SAVE_KEY = 'tap_empire_save_v1';
+const SAVE_KEY = 'tap_empire_save_v2';
 
 function serialize() {
     return JSON.stringify({
@@ -105,11 +188,19 @@ function serialize() {
         totalEarned: state.totalEarned,
         adsWatched: state.adsWatched,
         energy: Math.floor(state.energy),
-        lastDaily: state.lastDaily,
         upgrades: state.upgrades,
+        streak: state.streak,
+        bestStreak: state.bestStreak,
+        streakLastClaim: state.streakLastClaim,
+        daily: state.daily,
+        lastRankIdx: state.lastRankIdx,
+        refBonusGiven: state.refBonusGiven,
+        friendsShared: state.friendsShared,
         savedAt: Date.now(),
     });
 }
+
+let offlineEarnings = 0; // computed on load, offered via popup
 
 function applySave(json) {
     try {
@@ -118,11 +209,24 @@ function applySave(json) {
         state.totalTaps = d.totalTaps || 0;
         state.totalEarned = d.totalEarned || 0;
         state.adsWatched = d.adsWatched || 0;
-        state.lastDaily = d.lastDaily || 0;
-        state.upgrades = Object.assign({ multitap: 1, energy: 1, regen: 1 }, d.upgrades);
-        // Regenerate energy for time spent away
-        const away = Math.max(0, (Date.now() - (d.savedAt || Date.now())) / 1000);
-        state.energy = Math.min(maxEnergy(), (d.energy || 0) + away * regenPerSec());
+        state.upgrades = Object.assign({ multitap: 1, energy: 1, regen: 1, auto: 0 }, d.upgrades);
+        state.streak = d.streak || 0;
+        state.bestStreak = d.bestStreak || 0;
+        state.streakLastClaim = d.streakLastClaim || '';
+        state.daily = d.daily || null;
+        // v1 saves have no lastRankIdx — derive it so migration doesn't
+        // fire a rank-up celebration for ranks earned long ago
+        state.lastRankIdx = d.lastRankIdx !== undefined
+            ? d.lastRankIdx : rankIdxFor(d.totalEarned || 0);
+        state.refBonusGiven = Boolean(d.refBonusGiven);
+        state.friendsShared = d.friendsShared || 0;
+
+        const awaySec = Math.max(0, (Date.now() - (d.savedAt || Date.now())) / 1000);
+        // Energy regenerates while away
+        state.energy = Math.min(maxEnergy(), (d.energy || 0) + awaySec * regenPerSec());
+        // Auto Bot earns while away (capped)
+        const cappedSec = Math.min(awaySec, CONFIG.OFFLINE_CAP_HOURS * 3600);
+        offlineEarnings = Math.floor(cappedSec * autoPerHour() / 3600);
         return true;
     } catch (_) {
         return false;
@@ -144,11 +248,14 @@ function saveProgress(showFeedback) {
     }
 }
 
+const SAVE_KEY_V1 = 'tap_empire_save_v1';
+
 function loadProgress(done) {
-    const local = localStorage.getItem(SAVE_KEY);
+    const local = localStorage.getItem(SAVE_KEY) || localStorage.getItem(SAVE_KEY_V1);
     if (isTelegram && tg.CloudStorage) {
-        tg.CloudStorage.getItem(SAVE_KEY, (err, value) => {
-            if (!err && value) applySave(value);
+        tg.CloudStorage.getItems([SAVE_KEY, SAVE_KEY_V1], (err, values) => {
+            const value = !err && values && (values[SAVE_KEY] || values[SAVE_KEY_V1]);
+            if (value) applySave(value);
             else if (local) applySave(local);
             done();
         });
@@ -165,7 +272,9 @@ function resetProgress() {
         if (isTelegram && tg.CloudStorage) tg.CloudStorage.removeItem(SAVE_KEY, () => {});
         Object.assign(state, {
             balance: 0, totalTaps: 0, totalEarned: 0, adsWatched: 0,
-            energy: 100, lastDaily: 0, upgrades: { multitap: 1, energy: 1, regen: 1 },
+            energy: 100, upgrades: { multitap: 1, energy: 1, regen: 1, auto: 0 },
+            streak: 0, bestStreak: 0, streakLastClaim: '', daily: freshDaily(),
+            lastRankIdx: 0, refBonusGiven: false, friendsShared: 0,
         });
         haptic.warning();
         renderAll();
@@ -175,10 +284,10 @@ function resetProgress() {
 
 /* ============================================================
    Monetag ads
-   The SDK is injected at runtime using the configured zone id.
-   It exposes a global function named `show_<ZONE_ID>`:
-     show_XXXX()                      → rewarded interstitial (Promise)
+   The SDK exposes a global function named `show_<ZONE_ID>`:
+     show_XXXX({ ymid })              → rewarded interstitial (Promise)
      show_XXXX('pop')                 → rewarded popup (Promise)
+     show_XXXX({ type:'preload' })    → cache the next ad
      show_XXXX({ type:'inApp', ... }) → automatic in-app interstitials
    ============================================================ */
 let monetagFn = null;
@@ -244,15 +353,9 @@ function initMonetag() {
     document.head.appendChild(s);
 }
 
-/**
- * Show a rewarded ad. `variant` is undefined (interstitial) or 'pop'.
- * Resolves the promise only when Monetag reports the ad was watched,
- * then grants the reward.
- */
 async function showRewardedAd(variant, onRewarded) {
     if (typeof monetagFn !== 'function') {
         if (CONFIG.MONETAG_ZONE_ID) {
-            // Zone configured but the SDK function never appeared (blocked / failed to load)
             haptic.error();
             toast('⚠️ Ad SDK not loaded — check connection or ad blocker');
             return;
@@ -302,6 +405,7 @@ async function showRewardedAd(variant, onRewarded) {
 
 function grantAdReward(amount, label) {
     state.adsWatched += 1;
+    ensureDaily().ads += 1;
     addCoins(amount);
     haptic.success();
     showPopup({
@@ -314,30 +418,33 @@ function grantAdReward(amount, label) {
 }
 
 /* ============================================================
-   Game logic
+   Core game logic
    ============================================================ */
 function addCoins(n) {
     state.balance += n;
     state.totalEarned += n;
+    checkRankUp();
 }
 
 function onTap(e) {
-    if (state.energy < perTap()) {
+    if (state.energy < tapCost()) {
         haptic.warning();
         toast('⚡ Out of energy! Refill in the Earn tab.');
         return;
     }
-    state.energy -= perTap();
+    state.energy -= tapCost();
     state.totalTaps += 1;
-    addCoins(perTap());
-    haptic.tap();
+    ensureDaily().taps += 1;
+    const gain = perTap();
+    addCoins(gain);
+    frenzyActive() ? haptic.medium() : haptic.tap();
 
     // Floating "+N" at the touch point
     const area = $('floaters');
     const rect = area.getBoundingClientRect();
     const f = document.createElement('div');
-    f.className = 'floater';
-    f.textContent = '+' + perTap();
+    f.className = 'floater' + (frenzyActive() ? ' frenzy-floater' : '');
+    f.textContent = '+' + gain;
     const x = (e.clientX ?? rect.left + rect.width / 2) - rect.left;
     const y = (e.clientY ?? rect.top + rect.height / 2) - rect.top;
     f.style.left = (x - 12) + 'px';
@@ -358,37 +465,297 @@ function buyUpgrade(key) {
     state.balance -= cost;
     state.upgrades[key] += 1;
     if (key === 'energy') state.energy = maxEnergy(); // bonus: full refill
+    ensureDaily().upgrades += 1;
     haptic.success();
     toast('✅ Upgrade purchased!');
     renderAll();
     saveProgress(false);
 }
 
-function claimDaily() {
-    const DAY = 24 * 60 * 60 * 1000;
-    const remaining = state.lastDaily + DAY - Date.now();
-    if (remaining > 0) {
-        const h = Math.ceil(remaining / 3600000);
+/* ============================================================
+   Daily streak
+   ============================================================ */
+function streakClaimableToday() {
+    return state.streakLastClaim !== todayStr();
+}
+
+function claimStreak() {
+    if (!streakClaimableToday()) {
         haptic.warning();
-        toast(`⏳ Come back in ~${h}h for your next reward`);
+        toast('✅ Already claimed today — come back tomorrow!');
         return;
     }
-    state.lastDaily = Date.now();
-    addCoins(CONFIG.REWARD_DAILY);
+    // Continue the streak only if yesterday was claimed
+    state.streak = (state.streakLastClaim === yesterdayStr()) ? state.streak + 1 : 1;
+    state.bestStreak = Math.max(state.bestStreak, state.streak);
+    state.streakLastClaim = todayStr();
+
+    const reward = STREAK_REWARDS[(state.streak - 1) % STREAK_REWARDS.length];
+    addCoins(reward);
     haptic.success();
     showPopup({
-        title: '📅 Daily Reward',
-        message: `+${CONFIG.REWARD_DAILY} coins! Come back tomorrow for more.`,
+        title: `🔥 Day ${state.streak} streak!`,
+        message: `+${reward.toLocaleString()} coins. Come back tomorrow — day ${state.streak + 1} pays even more!`,
         buttons: [{ type: 'ok' }],
     });
     renderAll();
     saveProgress(false);
 }
 
-function inviteFriends() {
-    const user = tg?.initDataUnsafe?.user;
-    const link = `https://t.me/${CONFIG.BOT_USERNAME}/${CONFIG.APP_SHORT_NAME}?startapp=ref_${user?.id || 'guest'}`;
-    const text = '🪙 Join me in Tap Empire and start earning coins!';
+function renderStreak() {
+    const claimable = streakClaimableToday();
+    $('btnStreak').disabled = !claimable;
+    $('btnStreak').textContent = claimable ? 'Claim' : 'Done ✓';
+    $('streakSub').textContent = state.streak > 0
+        ? `🔥 ${state.streak}-day streak${claimable ? ' — claim to keep it!' : ' — see you tomorrow!'}`
+        : 'Claim every day — miss a day and it resets!';
+
+    // 7-cell calendar for the current cycle
+    const cal = $('streakCal');
+    cal.innerHTML = '';
+    // A missed day means the next claim restarts the cycle at day 1
+    const broken = claimable && state.streak > 0 && state.streakLastClaim !== yesterdayStr();
+    const effStreak = broken ? 0 : state.streak;
+    let doneCount = effStreak === 0 ? 0 : ((effStreak - 1) % 7) + 1;
+    if (claimable && doneCount === 7) doneCount = 0; // finished cycle → fresh row
+    for (let i = 0; i < 7; i++) {
+        const cell = document.createElement('div');
+        const isDone = i < doneCount;
+        const isNext = i === doneCount && claimable;
+        cell.className = 'streak-day' + (isDone ? ' done' : '') + (isNext ? ' next' : '');
+        cell.innerHTML = `<span class="sd-day">D${i + 1}</span><span class="sd-val">${isDone ? '✓' : fmt(STREAK_REWARDS[i])}</span>`;
+        cal.appendChild(cell);
+    }
+}
+
+/* ============================================================
+   Daily quests
+   ============================================================ */
+function renderQuests() {
+    const list = $('questList');
+    if (!list) return;
+    const daily = ensureDaily();
+    const quests = todaysQuests();
+    list.innerHTML = '';
+    for (const q of quests) {
+        const progress = Math.min(daily[q.key] || 0, q.target);
+        const complete = progress >= q.target;
+        const claimed = Boolean(daily.claimed[q.id]);
+        const row = document.createElement('div');
+        row.className = 'card quest-card';
+        row.innerHTML = `
+            <div class="card-icon">${q.icon}</div>
+            <div class="card-body">
+                <div class="card-title">${q.label}</div>
+                <div class="quest-bar"><div class="quest-fill" style="width:${progress / q.target * 100}%"></div></div>
+                <div class="card-sub">${fmt(progress)} / ${fmt(q.target)} · +${fmt(q.reward)} 🪙</div>
+            </div>
+            <button class="card-btn quest-btn" data-quest="${q.id}"
+                ${claimed ? 'disabled' : complete ? '' : 'disabled'}>
+                ${claimed ? '✓' : complete ? 'Claim' : '…'}
+            </button>`;
+        list.appendChild(row);
+    }
+    list.querySelectorAll('.quest-btn:not([disabled])').forEach((btn) => {
+        btn.addEventListener('click', () => claimQuest(btn.dataset.quest));
+    });
+}
+
+function claimQuest(id) {
+    const daily = ensureDaily();
+    const q = QUEST_POOL.find((x) => x.id === id);
+    if (!q || daily.claimed[id] || (daily[q.key] || 0) < q.target) return;
+    daily.claimed[id] = true;
+    addCoins(q.reward);
+    haptic.success();
+    toast(`🎯 Quest complete! +${fmt(q.reward)} 🪙`);
+    renderAll();
+    saveProgress(false);
+}
+
+/* ============================================================
+   Lucky wheel
+   ============================================================ */
+let wheelSpinning = false;
+
+function buildWheel() {
+    const wheel = $('wheel');
+    const n = WHEEL_SEGMENTS.length;
+    const seg = 360 / n;
+    // conic-gradient background
+    let stops = [];
+    WHEEL_SEGMENTS.forEach((s, i) => {
+        stops.push(`${s.color} ${i * seg}deg ${(i + 1) * seg}deg`);
+    });
+    wheel.style.background = `conic-gradient(${stops.join(',')})`;
+    // labels
+    WHEEL_SEGMENTS.forEach((s, i) => {
+        const lab = document.createElement('div');
+        lab.className = 'wheel-label';
+        lab.textContent = s.label;
+        lab.style.transform = `rotate(${i * seg + seg / 2}deg) translateY(-78px)`;
+        wheel.appendChild(lab);
+    });
+}
+
+function pickWheelPrize() {
+    const total = WHEEL_SEGMENTS.reduce((a, s) => a + s.weight, 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < WHEEL_SEGMENTS.length; i++) {
+        r -= WHEEL_SEGMENTS[i].weight;
+        if (r <= 0) return i;
+    }
+    return 0;
+}
+
+function openWheel() {
+    $('wheelModal').classList.remove('hidden');
+    updateSpinButton();
+}
+
+function updateSpinButton() {
+    const daily = ensureDaily();
+    const btn = $('btnSpinNow');
+    btn.disabled = wheelSpinning;
+    btn.textContent = daily.freeSpinUsed ? '🎬 SPIN (watch ad)' : '🎁 FREE SPIN';
+    $('wheelSub').textContent = daily.freeSpinUsed
+        ? 'Free spin used — extra spins via ads'
+        : '1 free spin ready!';
+}
+
+function doSpin() {
+    if (wheelSpinning) return;
+    const daily = ensureDaily();
+    if (!daily.freeSpinUsed) {
+        daily.freeSpinUsed = true;
+        spinWheel();
+    } else {
+        showRewardedAd(undefined, () => {
+            state.adsWatched += 1;
+            ensureDaily().ads += 1;
+            spinWheel();
+        });
+    }
+}
+
+function spinWheel() {
+    wheelSpinning = true;
+    updateSpinButton();
+    const prizeIdx = pickWheelPrize();
+    const seg = 360 / WHEEL_SEGMENTS.length;
+    // Land the middle of the prize segment under the top pointer
+    const target = 360 * 5 + (360 - (prizeIdx * seg + seg / 2));
+    const wheel = $('wheel');
+    wheel.style.transition = 'none';
+    wheel.style.transform = 'rotate(0deg)';
+    void wheel.offsetWidth; // reflow so the reset takes effect
+    wheel.style.transition = 'transform 4s cubic-bezier(0.12, 0.7, 0.1, 1)';
+    wheel.style.transform = `rotate(${target}deg)`;
+    haptic.medium();
+
+    setTimeout(() => {
+        wheelSpinning = false;
+        const prize = WHEEL_SEGMENTS[prizeIdx];
+        const daily = ensureDaily();
+        daily.spins += 1;
+        if (prize.energy) {
+            state.energy = maxEnergy();
+            toast('⚡ Energy fully refilled!');
+        } else {
+            addCoins(prize.coins);
+            toast(`🎡 You won ${fmt(prize.coins)} 🪙!`);
+        }
+        haptic.success();
+        updateSpinButton();
+        renderAll();
+        saveProgress(false);
+    }, 4200);
+}
+
+/* ============================================================
+   Golden coin frenzy
+   ============================================================ */
+let frenzyTicker = null;
+
+function maybeSpawnGoldenCoin() {
+    if (currentTab !== 'home' || frenzyActive() || !$('goldenCoin').classList.contains('hidden')) return;
+    if (Math.random() > 0.35) return;
+    const gc = $('goldenCoin');
+    gc.style.left = (10 + Math.random() * 70) + '%';
+    gc.style.top = (10 + Math.random() * 70) + '%';
+    gc.classList.remove('hidden');
+    haptic.medium();
+    setTimeout(() => gc.classList.add('hidden'), 6000);
+}
+
+function startFrenzy() {
+    $('goldenCoin').classList.add('hidden');
+    frenzyUntil = Date.now() + CONFIG.FRENZY_SECONDS * 1000;
+    haptic.heavy();
+    document.body.classList.add('frenzy');
+    $('frenzyBanner').classList.remove('hidden');
+    toast(`🔥 FRENZY! ×${CONFIG.FRENZY_MULTIPLIER} coins for ${CONFIG.FRENZY_SECONDS}s!`);
+    clearInterval(frenzyTicker);
+    frenzyTicker = setInterval(() => {
+        const left = Math.ceil((frenzyUntil - Date.now()) / 1000);
+        if (left <= 0) {
+            clearInterval(frenzyTicker);
+            document.body.classList.remove('frenzy');
+            $('frenzyBanner').classList.add('hidden');
+            renderGame();
+        } else {
+            $('frenzyTimer').textContent = left;
+        }
+    }, 250);
+    renderGame();
+}
+
+/* ============================================================
+   Ranks & celebration
+   ============================================================ */
+function rankIdxFor(earned) {
+    let idx = 0;
+    RANKS.forEach(([threshold], i) => { if (earned >= threshold) idx = i; });
+    return idx;
+}
+
+function checkRankUp() {
+    const idx = rankIdxFor(state.totalEarned);
+    if (idx > state.lastRankIdx) {
+        state.lastRankIdx = idx;
+        celebrateRank(idx);
+    }
+}
+
+function celebrateRank(idx) {
+    const [, icon, name] = RANKS[idx];
+    $('rankBigIcon').textContent = icon;
+    $('rankNewName').textContent = name;
+    $('rankOverlay').classList.remove('hidden');
+    haptic.success();
+    setTimeout(() => haptic.heavy(), 200);
+
+    // Confetti burst
+    const box = $('confetti');
+    box.innerHTML = '';
+    const emojis = ['🎉', '✨', '🪙', '⭐', '🎊'];
+    for (let i = 0; i < 40; i++) {
+        const p = document.createElement('span');
+        p.className = 'confetti-bit';
+        p.textContent = emojis[i % emojis.length];
+        p.style.left = Math.random() * 100 + '%';
+        p.style.animationDelay = (Math.random() * 0.8) + 's';
+        p.style.animationDuration = (1.5 + Math.random() * 1.5) + 's';
+        p.style.fontSize = (14 + Math.random() * 16) + 'px';
+        box.appendChild(p);
+    }
+}
+
+function shareRank() {
+    const idx = state.lastRankIdx;
+    const [, icon, name] = RANKS[idx];
+    const link = inviteLink();
+    const text = `${icon} I just reached ${name} rank in Tap Empire! Can you beat me?`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
     if (isTelegram) tg.openTelegramLink(shareUrl);
     else window.open(shareUrl, '_blank');
@@ -396,30 +763,100 @@ function inviteFriends() {
 }
 
 /* ============================================================
-   Rendering
+   Referrals
    ============================================================ */
-function rankFor(earned) {
-    let r = RANKS[0][1];
-    for (const [threshold, name] of RANKS) if (earned >= threshold) r = name;
-    return r;
+function inviteLink() {
+    const user = tg?.initDataUnsafe?.user;
+    return `https://t.me/${CONFIG.BOT_USERNAME}/${CONFIG.APP_SHORT_NAME}?startapp=ref_${user?.id || 'guest'}`;
 }
 
+function inviteFriends() {
+    const text = '🪙 Join me in Tap Empire and start earning coins! You get +500 🪙 to start.';
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink())}&text=${encodeURIComponent(text)}`;
+    if (isTelegram) tg.openTelegramLink(shareUrl);
+    else window.open(shareUrl, '_blank');
+    state.friendsShared += 1;
+    ensureDaily().shares += 1;
+    haptic.medium();
+    renderQuests();
+    saveProgress(false);
+}
+
+/* Welcome bonus when arriving through a friend's link */
+function checkReferralWelcome() {
+    const sp = tg?.initDataUnsafe?.start_param;
+    if (!sp || !sp.startsWith('ref_') || state.refBonusGiven) return;
+    const myId = String(tg?.initDataUnsafe?.user?.id || '');
+    if (sp === 'ref_' + myId) return; // can't refer yourself
+    state.refBonusGiven = true;
+    addCoins(CONFIG.REWARD_REFERRAL_WELCOME);
+    haptic.success();
+    showPopup({
+        title: '🎁 Welcome gift!',
+        message: `A friend invited you — here's +${CONFIG.REWARD_REFERRAL_WELCOME} coins to get started!`,
+        buttons: [{ type: 'ok' }],
+    });
+    saveProgress(false);
+}
+
+/* Offer offline earnings (computed in applySave) with an ad doubler */
+function offerOfflineEarnings() {
+    if (offlineEarnings < 20) return;
+    const amount = offlineEarnings;
+    offlineEarnings = 0;
+    showPopup({
+        title: '🤖 While you were away…',
+        message: `Your Auto Bots earned ${amount.toLocaleString()} coins!\nWatch an ad to DOUBLE it.`,
+        buttons: [
+            { id: 'double', type: 'default', text: `🎬 Claim ×2 (${(amount * 2).toLocaleString()})` },
+            { id: 'claim', type: 'default', text: `Claim ${amount.toLocaleString()}` },
+        ],
+    }, (id) => {
+        if (id === 'double') {
+            showRewardedAd(undefined, () => {
+                state.adsWatched += 1;
+                ensureDaily().ads += 1;
+                addCoins(amount * 2);
+                haptic.success();
+                toast(`🤖 +${fmt(amount * 2)} 🪙 collected (doubled)!`);
+                renderAll();
+                saveProgress(false);
+            });
+        } else {
+            addCoins(amount);
+            haptic.success();
+            toast(`🤖 +${fmt(amount)} 🪙 collected!`);
+            renderAll();
+            saveProgress(false);
+        }
+    });
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
 function renderGame() {
     $('balance').textContent = fmt(state.balance);
-    $('perTapLabel').textContent = `+${perTap()} per tap`;
+    $('perTapLabel').textContent = frenzyActive()
+        ? `🔥 +${perTap()} per tap`
+        : `👆 +${perTap()} per tap`;
+    $('profitChip').textContent = `⚙️ +${fmt(autoPerHour())}/hr`;
     $('energyText').textContent = `${Math.floor(state.energy)} / ${maxEnergy()}`;
     $('energyFill').style.width = (state.energy / maxEnergy() * 100) + '%';
-    $('tapCoin').classList.toggle('exhausted', state.energy < perTap());
-    $('userRank').textContent = rankFor(state.totalEarned);
+    $('tapCoin').classList.toggle('exhausted', state.energy < tapCost());
+    const [, icon, name] = RANKS[rankIdxFor(state.totalEarned)];
+    $('userRank').textContent = `${icon} ${name}`;
 }
 
 function renderShop() {
     $('lvlMultitap').textContent = state.upgrades.multitap;
     $('lvlEnergy').textContent = state.upgrades.energy;
     $('lvlRegen').textContent = state.upgrades.regen;
+    $('lvlAuto').textContent = state.upgrades.auto;
     $('costMultitap').textContent = fmt(upgradeCost('multitap'));
     $('costEnergy').textContent = fmt(upgradeCost('energy'));
     $('costRegen').textContent = fmt(upgradeCost('regen'));
+    $('costAuto').textContent = fmt(upgradeCost('auto'));
     document.querySelectorAll('.buy-btn').forEach((btn) => {
         btn.disabled = state.balance < upgradeCost(btn.dataset.upgrade);
     });
@@ -429,13 +866,15 @@ function renderProfile() {
     $('statTaps').textContent = fmt(state.totalTaps);
     $('statEarned').textContent = fmt(state.totalEarned);
     $('statAds').textContent = fmt(state.adsWatched);
-    $('statPlatform').textContent = isTelegram ? tg.platform : 'browser';
+    $('statStreak').textContent = fmt(state.bestStreak);
 }
 
 function renderAll() {
     renderGame();
     renderShop();
     renderProfile();
+    renderStreak();
+    renderQuests();
 }
 
 function renderUser() {
@@ -469,6 +908,7 @@ function switchTab(tab) {
     $('tab-' + tab).classList.add('active');
     document.querySelector(`.nav-btn[data-tab="${tab}"]`).classList.add('active');
     haptic.select();
+    if (tab === 'daily') { renderStreak(); renderQuests(); }
 
     if (!isTelegram) return;
 
@@ -505,7 +945,6 @@ function bindSdkButtons() {
     });
 
     $('sdkHaptics').onclick = () => {
-        // Little haptic melody
         const seq = ['light', 'medium', 'heavy', 'rigid', 'soft'];
         seq.forEach((style, i) => setTimeout(() => tg?.HapticFeedback?.impactOccurred(style), i * 150));
         setTimeout(() => haptic.success(), seq.length * 150);
@@ -568,6 +1007,7 @@ function bindSdkButtons() {
 function bindGameEvents() {
     // pointerdown feels snappier than click for a tap game
     $('tapCoin').addEventListener('pointerdown', onTap);
+    $('goldenCoin').addEventListener('pointerdown', startFrenzy);
 
     document.querySelectorAll('.nav-btn').forEach((btn) => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -585,6 +1025,7 @@ function bindGameEvents() {
                 showRewardedAd(undefined, () => {
                     state.energy = maxEnergy();
                     state.adsWatched += 1;
+                    ensureDaily().ads += 1;
                     haptic.success();
                     toast('⚡ Energy fully refilled!');
                     renderAll();
@@ -599,7 +1040,12 @@ function bindGameEvents() {
     });
 
     $('btnInvite').addEventListener('click', inviteFriends);
-    $('btnDaily').addEventListener('click', claimDaily);
+    $('btnStreak').addEventListener('click', claimStreak);
+    $('btnWheel').addEventListener('click', openWheel);
+    $('btnSpinNow').addEventListener('click', doSpin);
+    $('btnWheelClose').addEventListener('click', () => $('wheelModal').classList.add('hidden'));
+    $('btnRankShare').addEventListener('click', shareRank);
+    $('btnRankClose').addEventListener('click', () => $('rankOverlay').classList.add('hidden'));
 }
 
 function bindTelegramEvents() {
@@ -633,7 +1079,6 @@ function bindTelegramEvents() {
     }
 
     tg.onEvent('themeChanged', () => {
-        // CSS vars update automatically; refresh the chrome colors
         tg.setHeaderColor(tg.themeParams.bg_color || '#18222d');
         tg.setBackgroundColor(tg.themeParams.bg_color || '#18222d');
     });
@@ -650,13 +1095,27 @@ function bindTelegramEvents() {
 }
 
 function startLoops() {
-    // Energy regen (4 ticks/sec for smoothness)
+    // Energy regen + Auto Bot passive income (4 ticks/sec for smoothness)
     setInterval(() => {
+        let dirty = false;
         if (state.energy < maxEnergy()) {
             state.energy = Math.min(maxEnergy(), state.energy + regenPerSec() / 4);
-            renderGame();
+            dirty = true;
         }
+        if (state.upgrades.auto > 0) {
+            const gain = autoPerHour() / 3600 / 4;
+            state.balance += gain;
+            state.totalEarned += gain;
+            dirty = true;
+        }
+        if (dirty) renderGame();
     }, 250);
+
+    // Rank check for passive income (cheap, once a second)
+    setInterval(checkRankUp, 1000);
+
+    // Golden coin spawn check every 25 s
+    setInterval(maybeSpawnGoldenCoin, 25000);
 
     // Autosave every 30 s
     setInterval(() => saveProgress(false), 30000);
@@ -684,15 +1143,19 @@ function init() {
     bindGameEvents();
     bindSdkButtons();
     bindTelegramEvents();
+    buildWheel();
     initMonetag();
 
     loadProgress(() => {
+        ensureDaily();
+        checkReferralWelcome();
         renderAll();
         startLoops();
         // Reveal the app
         setTimeout(() => {
             $('splash').classList.add('hidden');
             $('app').classList.remove('hidden');
+            offerOfflineEarnings();
             if (!isTelegram) {
                 toast('⚠️ Running outside Telegram — SDK features are simulated');
             }

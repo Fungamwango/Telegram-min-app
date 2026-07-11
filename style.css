@@ -185,10 +185,18 @@ body {
 
 .coin-icon { font-size: 34px; }
 
-.per-tap {
-    font-size: 13px;
+.chip-row {
+    display: flex;
+    gap: 8px;
+}
+
+.chip {
+    font-size: 12.5px;
+    font-weight: 700;
     color: var(--gold);
-    font-weight: 600;
+    background: var(--card);
+    border-radius: 20px;
+    padding: 5px 12px;
 }
 
 .tap-area {
@@ -456,4 +464,243 @@ body {
 .toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* ============ Golden coin & frenzy ============ */
+.golden-coin {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border: none;
+    background: none;
+    font-size: 44px;
+    cursor: pointer;
+    z-index: 5;
+    filter: drop-shadow(0 0 12px rgba(245, 185, 60, 0.9));
+    animation: goldenPulse 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes goldenPulse {
+    from { transform: scale(1) rotate(-8deg); }
+    to   { transform: scale(1.25) rotate(8deg); }
+}
+
+.frenzy-banner {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, #ff5e3a, #ff9e2c);
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    padding: 6px 16px;
+    border-radius: 20px;
+    z-index: 6;
+    box-shadow: 0 4px 14px rgba(255, 94, 58, 0.5);
+    animation: goldenPulse 0.4s ease-in-out infinite alternate;
+}
+
+body.frenzy .tap-coin {
+    background: radial-gradient(circle at 32% 28%, #ffd0a8, #ff9e2c 55%, #c93f00);
+    box-shadow: 0 10px 40px rgba(255, 94, 58, 0.6),
+                inset 0 -8px 18px rgba(0, 0, 0, 0.25);
+}
+
+.frenzy-floater { color: #ff9e2c; }
+
+/* ============ Streak ============ */
+.streak-card { flex-direction: column; align-items: stretch; }
+
+.streak-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.streak-cal {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 5px;
+}
+
+.streak-day {
+    background: rgba(127, 127, 127, 0.12);
+    border-radius: 10px;
+    padding: 7px 2px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 10.5px;
+    color: var(--hint);
+}
+
+.streak-day .sd-val { font-weight: 800; font-size: 11.5px; color: var(--text); }
+
+.streak-day.done {
+    background: rgba(53, 196, 111, 0.22);
+}
+.streak-day.done .sd-val { color: #35c46f; }
+
+.streak-day.next {
+    outline: 2px solid var(--gold);
+    background: rgba(245, 185, 60, 0.15);
+}
+.streak-day.next .sd-val { color: var(--gold); }
+
+/* ============ Quests ============ */
+.quest-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(127, 127, 127, 0.18);
+    overflow: hidden;
+    margin: 6px 0 4px;
+}
+
+.quest-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--button), #7b5cf0);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.quest-btn { min-width: 66px; }
+
+/* ============ Modal & wheel ============ */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 150;
+}
+
+.modal-box {
+    background: var(--bg);
+    border-radius: 20px;
+    padding: 20px;
+    width: min(88vw, 340px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+}
+
+.modal-title { font-size: 18px; }
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--hint);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px;
+}
+
+.wheel-wrap {
+    position: relative;
+    width: min(66vw, 250px);
+    height: min(66vw, 250px);
+}
+
+.wheel-pointer {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 26px;
+    color: var(--text);
+    z-index: 2;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.wheel {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 6px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    position: relative;
+    overflow: hidden;
+}
+
+.wheel-label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    margin: -12px 0 0 -24px;
+    width: 48px;
+    text-align: center;
+    font-weight: 800;
+    font-size: 13px;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+    transform-origin: center;
+}
+
+.wheel-spin-btn {
+    width: 100%;
+    padding: 13px;
+    font-size: 15px;
+}
+
+/* ============ Rank-up overlay ============ */
+.rank-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 180;
+}
+
+.rank-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+    color: #fff;
+    z-index: 2;
+}
+
+.rank-content h2 {
+    font-size: 26px;
+    letter-spacing: 2px;
+}
+
+.rank-content p { font-size: 20px; font-weight: 700; color: var(--gold); }
+
+.rank-big {
+    font-size: 84px;
+    animation: rankPop 0.6s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes rankPop {
+    from { transform: scale(0); }
+    to   { transform: scale(1); }
+}
+
+#confetti {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.confetti-bit {
+    position: absolute;
+    top: -30px;
+    animation: confettiFall linear forwards;
+}
+
+@keyframes confettiFall {
+    to { transform: translateY(110vh) rotate(360deg); }
 }
