@@ -11,7 +11,7 @@
    as a "Telegram Mini App" ad unit, copy the zone number).
    ------------------------------------------------------------ */
 const CONFIG = {
-    MONETAG_ZONE_ID: '',        // e.g. '123456' — leave empty for demo mode
+    MONETAG_ZONE_ID: '11272175', // Monetag rewarded interstitial zone
     MONETAG_ENABLE_INAPP: true, // automatic in-app interstitials
     BOT_USERNAME: 'SageGames_bot', // used to build the invite link
     APP_SHORT_NAME: 'app',         // t.me/<bot>/<short_name> from BotFather
@@ -190,21 +190,33 @@ function initMonetag() {
             'Demo mode: no Monetag zone configured. Set MONETAG_ZONE_ID in app.js to serve real ads.';
         return;
     }
+
+    const setupInApp = () => {
+        if (!CONFIG.MONETAG_ENABLE_INAPP) return;
+        // Auto interstitials: max 3 per 30 min, ≥60 s apart, first after 10 s
+        monetagFn({
+            type: 'inApp',
+            inAppSettings: {
+                frequency: 3, capping: 0.5, interval: 60, timeout: 10, everyPage: false,
+            },
+        });
+    };
+
+    // SDK already loaded via a <script> tag in index.html — reuse it
+    if (typeof window['show_' + zone] === 'function') {
+        monetagFn = window['show_' + zone];
+        setupInApp();
+        return;
+    }
+
+    // Otherwise inject it ourselves
     const s = document.createElement('script');
     s.src = 'https://libtl.com/sdk.js';
     s.dataset.zone = zone;
     s.dataset.sdk = 'show_' + zone;
     s.onload = () => {
         monetagFn = window['show_' + zone];
-        if (typeof monetagFn === 'function' && CONFIG.MONETAG_ENABLE_INAPP) {
-            // Auto interstitials: max 3 per 30 min, ≥60 s apart, first after 10 s
-            monetagFn({
-                type: 'inApp',
-                inAppSettings: {
-                    frequency: 3, capping: 0.5, interval: 60, timeout: 10, everyPage: false,
-                },
-            });
-        }
+        if (typeof monetagFn === 'function') setupInApp();
     };
     s.onerror = () => { $('adsNote').textContent = 'Ad SDK failed to load.'; };
     document.head.appendChild(s);
