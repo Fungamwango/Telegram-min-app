@@ -13,8 +13,8 @@
 const CONFIG = {
     MONETAG_ZONE_ID: '',        // e.g. '123456' — leave empty for demo mode
     MONETAG_ENABLE_INAPP: true, // automatic in-app interstitials
-    BOT_USERNAME: 'YourBot',    // used to build the invite link
-    APP_SHORT_NAME: 'app',      // t.me/<bot>/<short_name> from BotFather
+    BOT_USERNAME: 'SageGames_bot', // used to build the invite link
+    APP_SHORT_NAME: 'app',         // t.me/<bot>/<short_name> from BotFather
     REWARD_INTERSTITIAL: 500,
     REWARD_POPUP: 250,
     REWARD_DAILY: 200,
