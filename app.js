@@ -229,10 +229,29 @@ function initMonetag() {
  */
 function showRewardedAd(variant, onRewarded) {
     if (typeof monetagFn === 'function') {
-        const p = variant === 'pop' ? monetagFn('pop') : monetagFn();
+        toast('🎬 Loading ad…');
+        let p;
+        try {
+            p = variant === 'pop' ? monetagFn('pop') : monetagFn();
+        } catch (err) {
+            haptic.error();
+            toast('Ad error: ' + (err && err.message ? err.message : err));
+            return;
+        }
         Promise.resolve(p)
             .then(() => onRewarded())
-            .catch(() => { haptic.error(); toast('Ad not completed — no reward'); });
+            .catch((err) => {
+                haptic.error();
+                const reason = err && (err.message || err.reason) ? ` (${err.message || err.reason})` : '';
+                toast('😕 No ad available / not completed' + reason);
+                console.error('Monetag ad failed:', err);
+            });
+        return;
+    }
+    if (CONFIG.MONETAG_ZONE_ID) {
+        // Zone configured but the SDK function never appeared (blocked / failed to load)
+        haptic.error();
+        toast('⚠️ Ad SDK not loaded — check connection or ad blocker');
         return;
     }
     // Demo mode: simulate an ad so the flow is testable end-to-end
@@ -603,6 +622,14 @@ function startLoops() {
 }
 
 function init() {
+    // On-device debug console: open the app URL with ?debug=1
+    if (/[?&]debug/.test(location.search)) {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/eruda';
+        s.onload = () => window.eruda && window.eruda.init();
+        document.head.appendChild(s);
+    }
+
     if (isTelegram) {
         tg.ready();
         tg.expand();
