@@ -182,6 +182,27 @@ function resetProgress() {
      show_XXXX({ type:'inApp', ... }) → automatic in-app interstitials
    ============================================================ */
 let monetagFn = null;
+let adBusy = false;          // blocks double-taps while an ad is in flight
+let preloadPromise = null;   // settles when the next rewarded ad is cached
+let preloadPending = false;
+let preloadYmid = null;      // ymid must match between preload and show
+
+/* Unique event id so Monetag can attribute the impression to this user */
+function adYmid() {
+    const uid = tg?.initDataUnsafe?.user?.id || 'guest';
+    return `${uid}_${Date.now()}`;
+}
+
+/* Cache the next rewarded interstitial so it starts instantly on tap */
+function preloadNextAd() {
+    if (typeof monetagFn !== 'function' || preloadPending) return;
+    preloadPending = true;
+    preloadYmid = adYmid();
+    preloadPromise = Promise.resolve(monetagFn({ type: 'preload', ymid: preloadYmid }))
+        .then(() => true)
+        .catch(() => { preloadPromise = null; return false; })
+        .finally(() => { preloadPending = false; });
+}
 
 function initMonetag() {
     const zone = CONFIG.MONETAG_ZONE_ID;
@@ -206,6 +227,7 @@ function initMonetag() {
     if (typeof window['show_' + zone] === 'function') {
         monetagFn = window['show_' + zone];
         setupInApp();
+        preloadNextAd();
         return;
     }
 
@@ -216,7 +238,7 @@ function initMonetag() {
     s.dataset.sdk = 'show_' + zone;
     s.onload = () => {
         monetagFn = window['show_' + zone];
-        if (typeof monetagFn === 'function') setupInApp();
+        if (typeof monetagFn === 'function') { setupInApp(); preloadNextAd(); }
     };
     s.onerror = () => { $('adsNote').textContent = 'Ad SDK failed to load.'; };
     document.head.appendChild(s);
@@ -227,36 +249,55 @@ function initMonetag() {
  * Resolves the promise only when Monetag reports the ad was watched,
  * then grants the reward.
  */
-function showRewardedAd(variant, onRewarded) {
-    if (typeof monetagFn === 'function') {
-        toast('🎬 Loading ad…');
-        let p;
-        try {
-            p = variant === 'pop' ? monetagFn('pop') : monetagFn();
-        } catch (err) {
+async function showRewardedAd(variant, onRewarded) {
+    if (typeof monetagFn !== 'function') {
+        if (CONFIG.MONETAG_ZONE_ID) {
+            // Zone configured but the SDK function never appeared (blocked / failed to load)
             haptic.error();
-            toast('Ad error: ' + (err && err.message ? err.message : err));
+            toast('⚠️ Ad SDK not loaded — check connection or ad blocker');
             return;
         }
-        Promise.resolve(p)
-            .then(() => onRewarded())
-            .catch((err) => {
-                haptic.error();
-                const reason = err && (err.message || err.reason) ? ` (${err.message || err.reason})` : '';
-                toast('😕 No ad available / not completed' + reason);
-                console.error('Monetag ad failed:', err);
-            });
+        // Demo mode: simulate an ad so the flow is testable end-to-end
+        toast('🎬 Demo ad playing…');
+        setTimeout(onRewarded, 1500);
         return;
     }
-    if (CONFIG.MONETAG_ZONE_ID) {
-        // Zone configured but the SDK function never appeared (blocked / failed to load)
+
+    if (adBusy) return;
+    adBusy = true;
+    toast('🎬 Loading ad…');
+    try {
+        if (variant === 'pop') {
+            await monetagFn('pop');
+        } else {
+            let ymid = adYmid();
+            if (preloadPromise) {
+                ymid = preloadYmid; // reuse the id the ad was preloaded with
+                // Wait max 12 s for the cached ad instead of hanging forever.
+                // (The timeout only guards the *fetch* — once the video is
+                // playing, completion is awaited without any time limit.)
+                const ready = await Promise.race([
+                    preloadPromise,
+                    new Promise((res) => setTimeout(() => res('timeout'), 12000)),
+                ]);
+                if (ready === 'timeout') {
+                    haptic.warning();
+                    toast('😕 No ad ready yet — try again in a minute');
+                    return;
+                }
+            }
+            await monetagFn({ ymid });
+        }
+        onRewarded();
+    } catch (err) {
         haptic.error();
-        toast('⚠️ Ad SDK not loaded — check connection or ad blocker');
-        return;
+        const reason = err && (err.message || err.reason) ? ` (${err.message || err.reason})` : '';
+        toast('😕 No ad available / not completed' + reason);
+        console.error('Monetag ad failed:', err);
+    } finally {
+        adBusy = false;
+        if (variant !== 'pop') preloadNextAd();
     }
-    // Demo mode: simulate an ad so the flow is testable end-to-end
-    toast('🎬 Demo ad playing…');
-    setTimeout(onRewarded, 1500);
 }
 
 function grantAdReward(amount, label) {
