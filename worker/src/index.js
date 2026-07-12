@@ -18,6 +18,11 @@ const enc = new TextEncoder();
 
 /* ---------------- helpers ---------------- */
 
+/* Secrets pasted into the dashboard often carry stray whitespace — trim
+   every secret at the point of use so an invisible character can't break
+   auth, webhooks, or postbacks. */
+const sec = (v) => (v || '').trim();
+
 function cors(env) {
     return {
         'access-control-allow-origin': env.ALLOWED_ORIGIN || '*',
@@ -73,8 +78,16 @@ async function validateInitData(initData, botToken) {
 async function authBody(request, env) {
     let body;
     try { body = await request.json(); } catch (_) { return { error: 'bad json' }; }
-    const auth = await validateInitData(body.initData, env.BOT_TOKEN);
-    if (!auth) return { error: 'invalid initData' };
+    if (!sec(env.BOT_TOKEN)) {
+        console.log('AUTH FAIL: BOT_TOKEN secret is not set');
+        return { error: 'server not configured' };
+    }
+    const auth = await validateInitData(body.initData, sec(env.BOT_TOKEN));
+    if (!auth) {
+        console.log('AUTH FAIL: initData rejected (hash/token mismatch or stale). len=',
+            (body.initData || '').length);
+        return { error: 'invalid initData' };
+    }
     return { body, auth };
 }
 
@@ -100,7 +113,7 @@ async function rankOf(env, totalEarned) {
 }
 
 async function tgSend(env, chatId, text, extra = {}) {
-    const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${sec(env.BOT_TOKEN)}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', ...extra }),
@@ -242,14 +255,18 @@ async function handleReminder(request, env) {
  * Idempotent per (ymid, event) — retries can't double-credit.
  */
 async function handlePostback(url, env) {
-    if (url.searchParams.get('s') !== env.POSTBACK_SECRET) {
+    if (url.searchParams.get('s') !== sec(env.POSTBACK_SECRET)) {
+        console.log('POSTBACK FAIL: wrong secret — update the URL in the Monetag dashboard');
         return new Response('forbidden', { status: 403 });
     }
-    const ymid = url.searchParams.get('ymid') || '';
+    let ymid = url.searchParams.get('ymid') || '';
     const event = url.searchParams.get('event') || 'impression';
     // ymid is "<telegram_id>_<timestamp>" (set by the app)
     let tid = Number(url.searchParams.get('telegram_id') || ymid.split('_')[0]);
     if (!Number.isInteger(tid) || tid <= 0) tid = null;
+    // Automatic in-app interstitials arrive without a ymid; substitute a
+    // unique one so the (ymid, event) dedup doesn't collapse them all
+    if (!ymid) ymid = `auto_${tid || 'anon'}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const price = Math.max(0, parseFloat(url.searchParams.get('estimated_price') || '0') || 0);
 
     const ins = await env.DB.prepare(
@@ -293,7 +310,7 @@ async function handleWebhook(request, env) {
 }
 
 async function handleAdmin(url, env) {
-    if (url.searchParams.get('s') !== env.POSTBACK_SECRET) {
+    if (url.searchParams.get('s') !== sec(env.POSTBACK_SECRET)) {
         return new Response('forbidden', { status: 403 });
     }
     if (url.pathname === '/api/admin/withdrawals') {
@@ -337,7 +354,12 @@ export default {
                 if (path === '/api/leaderboard') return handleLeaderboard(request, env);
                 if (path === '/api/withdraw') return handleWithdraw(request, env);
                 if (path === '/api/reminder') return handleReminder(request, env);
-                if (path === `/webhook/${env.WEBHOOK_SECRET}`) return handleWebhook(request, env);
+                if (path === `/webhook/${sec(env.WEBHOOK_SECRET)}`) return handleWebhook(request, env);
+                if (path.startsWith('/webhook/')) {
+                    console.log('WEBHOOK FAIL: path secret mismatch — re-run setWebhook with the current WEBHOOK_SECRET');
+                    // 200 so Telegram stops retrying a permanently-wrong path
+                    return new Response('OK');
+                }
             }
             if (request.method === 'GET') {
                 if (path === '/api/postback') return handlePostback(url, env);
