@@ -20,8 +20,10 @@ APP_SHORT_NAME = "app"
 REV_SHARE = "0.5"          # users get 50% of verified ad revenue
 MIN_WITHDRAW_USD = "1.0"   # minimum withdrawable balance
 
-# Secrets — set each with:  npx wrangler secret put <NAME>
-#   BOT_TOKEN  = 8726026491:AAEn7ZVR3DnHNY5Xsg74WkAMR_5ZVjvO1dM      your bot token from @BotFather
-#   POSTBACK_SECRET =luhTFJQLf8gtxhoMdq7iIrhie6RGysoo41zcd5g5  random string; goes in the Monetag postback URL & admin calls
-#   WEBHOOK_SECRET  =v2j8cV0BcUE3nX1BFoRN30NSPE9nZMjvzrNatUJz  random string; goes in the Telegram webhook path
-#   ADMIN_CHAT_ID =6909894732   your own Telegram user id (withdrawal alerts go here)
+# Secrets — NEVER write real values in this file (it is committed to git).
+# Set each one with:  npx wrangler secret put <NAME>   (or in the Cloudflare
+# dashboard under Settings → Variables and Secrets, type "Secret"):
+#   BOT_TOKEN        your bot token from @BotFather
+#   POSTBACK_SECRET  random string; goes in the Monetag postback URL & admin calls
+#   WEBHOOK_SECRET   random string; goes in the Telegram webhook path
+#   ADMIN_CHAT_ID    your own Telegram user id (withdrawal alerts go here)
