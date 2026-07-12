@@ -199,6 +199,17 @@ body {
     padding: 5px 12px;
 }
 
+.usd-chip {
+    border: 1px solid rgba(53, 196, 111, 0.45);
+    color: #35c46f;
+    background: rgba(53, 196, 111, 0.12);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    margin-top: 6px;
+}
+
+.usd-chip:active { transform: scale(0.96); }
+
 .tap-area {
     position: relative;
     flex: 1;

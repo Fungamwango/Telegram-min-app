@@ -22,6 +22,11 @@ const CONFIG = {
     APP_SHORT_NAME: 'app',         // t.me/<bot>/<short_name> from BotFather
     REWARD_INTERSTITIAL: 500,
     REWARD_POPUP: 250,
+    // Home-screen "≈ $" motivator: estimated micro-earnings shown in real
+    // time. Purely visual — the withdrawable number is the server-verified
+    // balance on the Earn tab.
+    SIM_USD_PER_TAP: 0.0000001,
+    SIM_USD_PER_AD: 0.00004,
     REWARD_REFERRAL_WELCOME: 500,  // bonus for joining via a friend's link
     AUTO_RATE_PER_LEVEL: 250,      // coins per hour per Auto Bot level
     OFFLINE_CAP_HOURS: 3,          // max hours of offline earnings
@@ -84,7 +89,22 @@ const state = {
     lastRankIdx: 0,
     refBonusGiven: false,
     friendsShared: 0,
+    simUsd: 0,   // estimated lifetime USD (display only; floored to server value)
 };
+
+/* Estimated-earnings ticker (Home screen motivator) */
+function simEarn(amount) {
+    state.simUsd += amount;
+    const el = $('usdChip');
+    if (el) el.textContent = `💵 ≈ $${state.simUsd.toFixed(7)}`;
+}
+
+/* Every path that counts a watched ad funnels through here */
+function countAdWatched() {
+    state.adsWatched += 1;
+    ensureDaily().ads += 1;
+    simEarn(CONFIG.SIM_USD_PER_AD * (0.5 + Math.random())); // ±50% realism
+}
 
 /* Frenzy (not persisted) */
 let frenzyUntil = 0;
@@ -200,6 +220,7 @@ function serialize() {
         lastRankIdx: state.lastRankIdx,
         refBonusGiven: state.refBonusGiven,
         friendsShared: state.friendsShared,
+        simUsd: state.simUsd,
         savedAt: Date.now(),
     });
 }
@@ -224,6 +245,7 @@ function applySave(json) {
             ? d.lastRankIdx : rankIdxFor(d.totalEarned || 0);
         state.refBonusGiven = Boolean(d.refBonusGiven);
         state.friendsShared = d.friendsShared || 0;
+        state.simUsd = d.simUsd || 0;
 
         const awaySec = Math.max(0, (Date.now() - (d.savedAt || Date.now())) / 1000);
         // Energy regenerates while away
@@ -278,7 +300,7 @@ function resetProgress() {
             balance: 0, totalTaps: 0, totalEarned: 0, adsWatched: 0,
             energy: 100, upgrades: { multitap: 1, energy: 1, regen: 1, auto: 0 },
             streak: 0, bestStreak: 0, streakLastClaim: '', daily: freshDaily(),
-            lastRankIdx: 0, refBonusGiven: false, friendsShared: 0,
+            lastRankIdx: 0, refBonusGiven: false, friendsShared: 0, simUsd: 0,
         });
         haptic.warning();
         renderAll();
@@ -408,8 +430,7 @@ async function showRewardedAd(variant, onRewarded) {
 }
 
 function grantAdReward(amount, label) {
-    state.adsWatched += 1;
-    ensureDaily().ads += 1;
+    countAdWatched();
     addCoins(amount);
     haptic.success();
     showPopup({
@@ -441,6 +462,7 @@ function onTap(e) {
     ensureDaily().taps += 1;
     const gain = perTap();
     addCoins(gain);
+    simEarn(CONFIG.SIM_USD_PER_TAP);
     frenzyActive() ? haptic.medium() : haptic.tap();
 
     // Floating "+N" at the touch point
@@ -635,8 +657,7 @@ function doSpin() {
         spinWheel();
     } else {
         showRewardedAd(undefined, () => {
-            state.adsWatched += 1;
-            ensureDaily().ads += 1;
+            countAdWatched();
             spinWheel();
         });
     }
@@ -843,6 +864,11 @@ async function initServer() {
     server.reminderEnabled = Boolean(d.reminder_enabled);
     server.botStarted = Boolean(d.bot_started);
     server.rank = d.rank;
+    // The estimate never displays less than what's actually been verified
+    if ((d.usd_lifetime || 0) > state.simUsd) {
+        state.simUsd = d.usd_lifetime;
+        renderGame();
+    }
     // Reveal the server-backed UI
     $('btnBoard').classList.remove('hidden');
     $('cardWallet').classList.remove('hidden');
@@ -972,8 +998,7 @@ function offerOfflineEarnings() {
     }, (id) => {
         if (id === 'double') {
             showRewardedAd(undefined, () => {
-                state.adsWatched += 1;
-                ensureDaily().ads += 1;
+                countAdWatched();
                 addCoins(amount * 2);
                 haptic.success();
                 toast(`🤖 +${fmt(amount * 2)} 🪙 collected (doubled)!`);
@@ -999,6 +1024,7 @@ function renderGame() {
         ? `🔥 +${perTap()} per tap`
         : `👆 +${perTap()} per tap`;
     $('profitChip').textContent = `⚙️ +${fmt(autoPerHour())}/hr`;
+    $('usdChip').textContent = `💵 ≈ $${state.simUsd.toFixed(7)}`;
     $('energyText').textContent = `${Math.floor(state.energy)} / ${maxEnergy()}`;
     $('energyFill').style.width = (state.energy / maxEnergy() * 100) + '%';
     $('tapCoin').classList.toggle('exhausted', state.energy < tapCost());
@@ -1182,8 +1208,7 @@ function bindGameEvents() {
             } else if (kind === 'energy') {
                 showRewardedAd(undefined, () => {
                     state.energy = maxEnergy();
-                    state.adsWatched += 1;
-                    ensureDaily().ads += 1;
+                    countAdWatched();
                     haptic.success();
                     toast('⚡ Energy fully refilled!');
                     renderAll();
@@ -1196,6 +1221,12 @@ function bindGameEvents() {
     document.querySelectorAll('.buy-btn').forEach((btn) => {
         btn.addEventListener('click', () => buyUpgrade(btn.dataset.upgrade));
     });
+
+    $('usdChip').addEventListener('click', () => showPopup({
+        title: '💵 Estimated earnings',
+        message: 'This live counter estimates the value your activity generates — it grows as you tap and watch ads.\n\nYour real, withdrawable balance is verified by the ad network and shown on the Earn tab.',
+        buttons: [{ type: 'ok' }],
+    }));
 
     $('btnInvite').addEventListener('click', inviteFriends);
     $('btnStreak').addEventListener('click', claimStreak);
