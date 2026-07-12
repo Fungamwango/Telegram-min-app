@@ -1,0 +1,27 @@
+name = "tap-empire-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Create the database first:  npx wrangler d1 create tap_empire
+# then paste the database_id it prints below.
+[[d1_databases]]
+binding = "DB"
+database_name = "tap_empire"
+database_id = "ff5f2ab2-517a-4561-908b-c0e1118d6791"
+
+# Daily reminder notifications (17:00 UTC)
+[triggers]
+crons = ["0 17 * * *"]
+
+[vars]
+ALLOWED_ORIGIN = "https://sagetelegram.pages.dev"
+BOT_USERNAME = "SageGames_bot"
+APP_SHORT_NAME = "app"
+REV_SHARE = "0.5"          # users get 50% of verified ad revenue
+MIN_WITHDRAW_USD = "1.0"   # minimum withdrawable balance
+
+# Secrets — set each with:  npx wrangler secret put <NAME>
+#   BOT_TOKEN  = 8726026491:AAEn7ZVR3DnHNY5Xsg74WkAMR_5ZVjvO1dM      your bot token from @BotFather
+#   POSTBACK_SECRET =luhTFJQLf8gtxhoMdq7iIrhie6RGysoo41zcd5g5  random string; goes in the Monetag postback URL & admin calls
+#   WEBHOOK_SECRET  =v2j8cV0BcUE3nX1BFoRN30NSPE9nZMjvzrNatUJz  random string; goes in the Telegram webhook path
+#   ADMIN_CHAT_ID =6909894732   your own Telegram user id (withdrawal alerts go here)

@@ -33,6 +33,7 @@
                 </div>
             </div>
             <div class="header-right">
+                <button class="icon-btn hidden" id="btnBoard" title="Leaderboard">🏆</button>
                 <button class="icon-btn" id="btnTheme" title="Theme info">🎨</button>
             </div>
         </header>
@@ -102,6 +103,15 @@
         <!-- ============ EARN TAB (ads & friends) ============ -->
         <main class="tab" id="tab-earn">
             <h2 class="tab-title">💰 Earn More</h2>
+
+            <div class="card wallet-card hidden" id="cardWallet">
+                <div class="card-icon">💵</div>
+                <div class="card-body">
+                    <div class="card-title">Real Earnings</div>
+                    <div class="card-sub" id="walletSub">$0.0000 verified</div>
+                </div>
+                <button class="card-btn" id="btnWithdraw">Withdraw</button>
+            </div>
 
             <div class="card earn-card" id="cardRewardedInterstitial">
                 <div class="card-icon">🎬</div>
@@ -220,6 +230,7 @@
                 <button class="sdk-btn" id="sdkExpand">↕️ Expand</button>
                 <button class="sdk-btn" id="sdkContact">📱 Contact</button>
                 <button class="sdk-btn" id="sdkHome">➕ Home Screen</button>
+                <button class="sdk-btn hidden" id="sdkBell">🔔 Reminders: ON</button>
             </div>
 
             <h3 class="section-title">☁️ Cloud Storage</h3>
@@ -250,6 +261,28 @@
             </div>
             <button class="card-btn wheel-spin-btn" id="btnSpinNow">SPIN</button>
             <button class="modal-close" id="btnWheelClose">Close</button>
+        </div>
+    </div>
+
+    <!-- ============ LEADERBOARD MODAL ============ -->
+    <div id="boardModal" class="modal hidden">
+        <div class="modal-box">
+            <h3 class="modal-title">🏆 Leaderboard</h3>
+            <div class="board-me" id="boardMe"></div>
+            <div class="board-list" id="boardList">Loading…</div>
+            <button class="modal-close" id="btnBoardClose">Close</button>
+        </div>
+    </div>
+
+    <!-- ============ WITHDRAW MODAL ============ -->
+    <div id="withdrawModal" class="modal hidden">
+        <div class="modal-box">
+            <h3 class="modal-title">💸 Withdraw</h3>
+            <p class="modal-text" id="withdrawInfo"></p>
+            <input class="text-input" id="walletInput" type="text"
+                   placeholder="Your TON / USDT wallet address" maxlength="128">
+            <button class="card-btn wheel-spin-btn" id="btnWithdrawConfirm">Request Payout</button>
+            <button class="modal-close" id="btnWithdrawClose">Cancel</button>
         </div>
     </div>
 

@@ -12,6 +12,10 @@
    CONFIG
    ------------------------------------------------------------ */
 const CONFIG = {
+    // Phase B backend (Cloudflare Worker URL, no trailing slash),
+    // e.g. 'https://tap-empire-api.yourname.workers.dev'.
+    // Leave empty to run fully client-side.
+    API_BASE: 'https://tap-empire-api.sageemail1000.workers.dev',
     MONETAG_ZONE_ID: '11272175', // Monetag rewarded interstitial zone
     MONETAG_ENABLE_INAPP: true,  // automatic in-app interstitials
     BOT_USERNAME: 'SageGames_bot', // used to build the invite link
@@ -799,6 +803,160 @@ function checkReferralWelcome() {
     saveProgress(false);
 }
 
+/* ============================================================
+   Phase B server (Cloudflare Worker): verified earnings,
+   leaderboard, withdrawals, reminder DMs.
+   All of this silently no-ops when CONFIG.API_BASE is empty.
+   ============================================================ */
+const server = {
+    connected: false,
+    usdBalance: 0,
+    verifiedAds: 0,
+    minWithdraw: 1,
+    reminderEnabled: true,
+    botStarted: false,
+    rank: null,
+};
+
+async function api(path, payload = {}) {
+    if (!CONFIG.API_BASE || !isTelegram) return null;
+    try {
+        const res = await fetch(CONFIG.API_BASE + path, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ initData: tg.initData, ...payload }),
+        });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (_) {
+        return null;
+    }
+}
+
+async function initServer() {
+    const d = await api('/api/auth');
+    if (!d || !d.ok) return; // offline / not configured — app stays client-only
+    server.connected = true;
+    server.usdBalance = d.usd_balance || 0;
+    server.verifiedAds = d.verified_ads || 0;
+    server.minWithdraw = d.min_withdraw || 1;
+    server.reminderEnabled = Boolean(d.reminder_enabled);
+    server.botStarted = Boolean(d.bot_started);
+    server.rank = d.rank;
+    // Reveal the server-backed UI
+    $('btnBoard').classList.remove('hidden');
+    $('cardWallet').classList.remove('hidden');
+    $('sdkBell').classList.remove('hidden');
+    renderServer();
+    syncServer();
+}
+
+let lastSync = 0;
+async function syncServer(force) {
+    if (!server.connected) return;
+    if (!force && Date.now() - lastSync < 45000) return; // throttle
+    lastSync = Date.now();
+    const d = await api('/api/sync', {
+        balance: Math.floor(state.balance),
+        totalEarned: Math.floor(state.totalEarned),
+        totalTaps: state.totalTaps,
+        streak: state.streak,
+    });
+    if (d && d.ok) {
+        server.usdBalance = d.usd_balance || 0;
+        server.verifiedAds = d.verified_ads || 0;
+        renderServer();
+    }
+}
+
+function renderServer() {
+    if (!server.connected) return;
+    $('walletSub').textContent =
+        `$${server.usdBalance.toFixed(4)} verified · min payout $${server.minWithdraw.toFixed(2)}`;
+    $('btnWithdraw').disabled = server.usdBalance < server.minWithdraw;
+    $('sdkBell').textContent = `🔔 Reminders: ${server.reminderEnabled ? 'ON' : 'OFF'}`;
+}
+
+async function openLeaderboard() {
+    $('boardModal').classList.remove('hidden');
+    $('boardList').textContent = 'Loading…';
+    $('boardMe').textContent = '';
+    const d = await api('/api/leaderboard');
+    if (!d || !d.ok) {
+        $('boardList').textContent = 'Could not load the leaderboard.';
+        return;
+    }
+    const myId = tg?.initDataUnsafe?.user?.id;
+    if (d.me) $('boardMe').textContent = `Your rank: #${d.me.rank} · ${fmt(d.me.earned)} 🪙`;
+    const list = $('boardList');
+    list.innerHTML = '';
+    const medals = ['🥇', '🥈', '🥉'];
+    for (const row of d.top) {
+        const el = document.createElement('div');
+        el.className = 'board-row' + (row.id === myId ? ' me' : '');
+        el.innerHTML = `
+            <span class="board-rank">${medals[row.rank - 1] || '#' + row.rank}</span>
+            <span class="board-name"></span>
+            <span class="board-score">${fmt(row.earned)} 🪙</span>`;
+        el.querySelector('.board-name').textContent =
+            row.name + (row.streak > 1 ? ` 🔥${row.streak}` : '');
+        list.appendChild(el);
+    }
+}
+
+function openWithdraw() {
+    if (server.usdBalance < server.minWithdraw) {
+        haptic.warning();
+        toast(`Minimum payout is $${server.minWithdraw.toFixed(2)} — keep watching ads!`);
+        return;
+    }
+    $('withdrawInfo').textContent =
+        `Your full verified balance of $${server.usdBalance.toFixed(4)} will be paid out. Payouts are processed manually within 48 h.`;
+    $('withdrawModal').classList.remove('hidden');
+}
+
+async function confirmWithdraw() {
+    const wallet = $('walletInput').value.trim();
+    if (wallet.length < 10) {
+        haptic.error();
+        toast('Please enter a valid wallet address');
+        return;
+    }
+    $('btnWithdrawConfirm').disabled = true;
+    const d = await api('/api/withdraw', { wallet });
+    $('btnWithdrawConfirm').disabled = false;
+    if (d && d.ok) {
+        server.usdBalance = 0;
+        renderServer();
+        $('withdrawModal').classList.add('hidden');
+        haptic.success();
+        showPopup({
+            title: '💸 Payout requested!',
+            message: `$${d.amount} is on its way to your wallet. You'll get a Telegram message when it's sent.`,
+            buttons: [{ type: 'ok' }],
+        });
+    } else {
+        haptic.error();
+        toast((d && d.error) || 'Withdrawal failed — try again later');
+    }
+}
+
+async function toggleReminders() {
+    const enable = !server.reminderEnabled;
+    const d = await api('/api/reminder', { enabled: enable });
+    if (d && d.ok) {
+        server.reminderEnabled = enable;
+        renderServer();
+        toast(enable ? '🔔 Daily reminders on' : '🔕 Reminders off');
+        // The bot can only DM users who pressed Start at least once
+        if (enable && !server.botStarted) {
+            showConfirm('To receive reminders, you need to start the bot once. Open the chat now?', (ok) => {
+                if (ok) tg.openTelegramLink(`https://t.me/${CONFIG.BOT_USERNAME}?start=notify`);
+            });
+        }
+    }
+}
+
 /* Offer offline earnings (computed in applySave) with an ad doubler */
 function offerOfflineEarnings() {
     if (offlineEarnings < 20) return;
@@ -1046,6 +1204,14 @@ function bindGameEvents() {
     $('btnWheelClose').addEventListener('click', () => $('wheelModal').classList.add('hidden'));
     $('btnRankShare').addEventListener('click', shareRank);
     $('btnRankClose').addEventListener('click', () => $('rankOverlay').classList.add('hidden'));
+
+    // Phase B (server) UI
+    $('btnBoard').addEventListener('click', openLeaderboard);
+    $('btnBoardClose').addEventListener('click', () => $('boardModal').classList.add('hidden'));
+    $('btnWithdraw').addEventListener('click', openWithdraw);
+    $('btnWithdrawConfirm').addEventListener('click', confirmWithdraw);
+    $('btnWithdrawClose').addEventListener('click', () => $('withdrawModal').classList.add('hidden'));
+    $('sdkBell').addEventListener('click', toggleReminders);
 }
 
 function bindTelegramEvents() {
@@ -1090,7 +1256,10 @@ function bindTelegramEvents() {
 
     // Save when the app is about to close / hide
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') saveProgress(false);
+        if (document.visibilityState === 'hidden') {
+            saveProgress(false);
+            syncServer(true);
+        }
     });
 }
 
@@ -1117,8 +1286,8 @@ function startLoops() {
     // Golden coin spawn check every 25 s
     setInterval(maybeSpawnGoldenCoin, 25000);
 
-    // Autosave every 30 s
-    setInterval(() => saveProgress(false), 30000);
+    // Autosave every 30 s; server sync throttles itself to ≥45 s
+    setInterval(() => { saveProgress(false); syncServer(); }, 30000);
 }
 
 function init() {
@@ -1151,6 +1320,7 @@ function init() {
         checkReferralWelcome();
         renderAll();
         startLoops();
+        initServer();
         // Reveal the app
         setTimeout(() => {
             $('splash').classList.add('hidden');
